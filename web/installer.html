@@ -354,7 +354,7 @@ async function run(img, product, isStock, sha256) {
     const ota = await up.find((id) => /^ota-/i.test(id.model));
     if (ota) {
       ota.link.close();
-      const done = await up.resume(img, step);
+      const done = await up.resume(img, step, product);
       if (done && withBoot) await up.installBoot(boot, product, step);
       else {
         if (done) $("bar").value = 100;

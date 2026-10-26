@@ -154,7 +154,7 @@ export class Updater {
     const outs = [...this.access.outputs.values()];
     for (const input of this.access.inputs.values()) {
       if (input.state === "disconnected") continue;
-      if (!/fm-?1|felucca|ota|composite|sinco|usb-midi/i.test(input.name || "")) continue;   // never probe other gear
+      if (!/fm-?1|smk|elite|mke-p37|starry|felucca|ota|composite|sinco|usb-midi/i.test(input.name || "")) continue;   // never probe other gear
       const output = outs.find((o) => o.name === input.name) || (outs.length === 1 ? outs[0] : null);
       if (!output) continue;
       try { await input.open(); await output.open(); } catch (_) { continue; }
@@ -288,10 +288,15 @@ export class Updater {
     return s2;
   }
 
-  // resume: the device is already in update mode (loader) -> true when the write finished
-  async resume(image, onStep) {
+  // resume: the device is already in update mode (loader) -> true when the write finished. product (the package's
+  // identity): the loader's model must be the package's, so an SMK loader never gets an FM-1 package, nor another model's.
+  async resume(image, onStep, product) {
     const ota = await this.find(IS_OTA);
     if (!ota) return false;
+    if (product && ota.id.model.replace(/^ota-/i, "") !== product.split("_")[0]) {
+      ota.link.close();
+      throw fail("model", `the device is in the update mode of ${ota.id.text}, the package is for ${product}`, ota.id.text);
+    }
     return (await this.write(ota, image, onStep || (() => {}))).finished;
   }
 }

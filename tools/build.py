@@ -798,10 +798,11 @@ def build_web():
     sys.stderr.write(r.stderr)
     if r.returncode:
         raise SystemExit("build: the emulator did not compile (emcc: Emscripten)")
-    # the page: the app's own (APP_DIR/web/emu/index.html, worklet.js), or fm1-base's
+    # the page: the app's own (APP_DIR/web/emu/smk37.html for the SMK, else index.html; worklet.js), or fm1-base's
+    page_name = "smk37.html" if BOARD == "smk37" and (APP / "web" / "emu" / "smk37.html").exists() else "index.html"
     web = {f: (APP / "web" / "emu" / f if (APP / "web" / "emu" / f).exists() else SRC / "web" / "emu" / f)
-           for f in ("index.html", "worklet.js")}
-    page = web["index.html"].read_text()
+           for f in (page_name, "worklet.js")}
+    page = web[page_name].read_text()
     page = page.replace("{{NAME}}", CONF.get("name", NAME)).replace("{{ID}}", NAME)
     (emu / "index.html").write_text(page)
     shutil.copy(web["worklet.js"], emu / "worklet.js")

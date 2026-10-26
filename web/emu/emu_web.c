@@ -143,6 +143,60 @@ __attribute__((used, visibility("default"))) uint32_t web_store_writes(void) { r
 __attribute__((used, visibility("default"))) uint32_t web_nobj(void) { return OBJ_NOBJ; }
 __attribute__((used, visibility("default"))) uint32_t web_store_max(void) { return PLAT_STORE_MAX; }
 
+#if BOARD_SMK37
+/* The SMK-37 page's controls: the 37-key keybed, the 16 pads, the four extra buttons, faders and wheels. The
+ * platform's SMK state is in plat_host.c; the page sends edges and reads the pad colours back. */
+__attribute__((used, visibility("default"))) void web_smk_keybed(uint32_t k, uint32_t vel)
+{
+    if (k >= SMK_NKEYBED)
+        return;
+    if (vel) {
+        hsmk_bed_vel[k] = (uint8_t)(vel > 127u ? 127u : vel);
+        hsmk_bed |= (uint64_t)1u << k;
+        hsmk_bed_hit |= (uint64_t)1u << k;
+    } else {
+        hsmk_bed &= ~((uint64_t)1u << k);
+    }
+}
+__attribute__((used, visibility("default"))) void web_smk_pad(uint32_t p, uint32_t vel)
+{
+    if (p >= SMK_NPADS)
+        return;
+    if (vel) {
+        hsmk_pads_held |= 1u << p;
+        hsmk_pad_hit |= 1u << p;
+    } else {
+        hsmk_pads_held &= ~(1u << p);
+    }
+}
+__attribute__((used, visibility("default"))) void web_smk_button(uint32_t i, uint32_t on)
+{
+    if (i >= NSB)
+        return;
+    if (on)
+        hsmk_sb |= 1u << i;
+    else
+        hsmk_sb &= ~(1u << i);
+}
+__attribute__((used, visibility("default"))) void web_smk_fader(uint32_t i, uint32_t v)
+{
+    if (i < 4u)
+        hsmk_fad[i] = v > 127u ? 127 : (int)v;
+}
+__attribute__((used, visibility("default"))) void web_smk_wheel(int32_t pitch, int32_t mod)
+{
+    hsmk_wh_pitch = pitch < -127 ? -127 : pitch > 127 ? 127 : pitch;
+    hsmk_wh_mod = mod < 0 ? 0 : mod > 127 ? 127 : mod;
+    hsmk_wh_new = 1;
+}
+__attribute__((used, visibility("default"))) uint32_t web_smk_pad_rgb(uint32_t p)
+{
+    return p < SMK_NPADS ? hsmk_pad_rgb[p] : 0u;
+}
+__attribute__((used, visibility("default"))) uint32_t web_smk_leds(void) { return hsmk_led_lit; }
+__attribute__((used, visibility("default"))) uint32_t web_smk_pads_held(void) { return hsmk_pads_held; }
+#endif
+
 #ifdef APP_WEB
 #include "web.c"                        /* the app's own exports for its page (app.h APP_WEB) */
 #endif
