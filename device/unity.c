@@ -1,5 +1,6 @@
 /* SPDX-License-Identifier: MPL-2.0
- * Copyright (C) 2026 Charles Vestal */
+ * Copyright (C) 2026 Charles Vestal
+ * The M-Vave SMK-37 parts: Copyright (C) 2026 M. Geisler (genkigenki/makkuro) */
 /* An fm1-base firmware for the M-VAVE FM-1: one compilation unit for the platform and the app
  * (Felucca's layout: the chip and board layers are header-only, so everything that touches them is here).
  * An app's heavy code (its DSP) may be separate units at -O2 (fm1.toml: o2); this one is -Os. Order matters.
@@ -100,6 +101,12 @@ static volatile uint32_t fm1_ms;  /* milliseconds since boot (TIMER4-based, TIME
 #define FELUCCA_MIRROR FM1B_MIRROR /* usb.c's ring for mirror.c's frames */
 #define SXQ 128u                  /* the SysEx send ring, in packets: a whole screen-reader SAY (ANN_MAX + 9 bytes) */
 #include "usb.c"
+#if BOARD_SMK37 && !defined(FM1B_TRS)
+#define FM1B_TRS 0                /* the SMK-37's TRS jack is MIDI OUT, and PH8 (the FM-1's MIDI IN) is a matrix row */
+#endif
+#if BOARD_SMK37 && FM1B_TRS
+#error "BOARD_SMK37: midi_uart.c is the FM-1's MIDI IN (RX on PH8, a key-matrix row on the SMK-37)"
+#endif
 #ifndef FM1B_TRS
 #define FM1B_TRS 1
 #endif
@@ -138,6 +145,15 @@ static int st_prog(uint32_t off, const void *src, uint32_t n)
         return -8;
     return fl_write(off, src, n);
 }
+#if BOARD_SMK37
+static int st_erase_stocktag(void)              /* the stock firmware's USRFLASH end marker: erased, never written */
+{
+    uint32_t took;
+    audio_silence();
+    return fl_erase4k(FL_STOCKTAG_LO, &took);
+}
+#define ST_IDLE() fm1_wdt_feed()  /* (storage.c: between the erases of a store take-over) */
+#endif
 #include "storage.c"
 
 struct bootguard_s { uint32_t magic, failed, pending; };

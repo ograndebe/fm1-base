@@ -1,5 +1,6 @@
 /* SPDX-License-Identifier: MPL-2.0
- * Copyright (C) 2026 Charles Vestal */
+ * Copyright (C) 2026 Charles Vestal
+ * The M-Vave SMK-37 parts: Copyright (C) 2026 M. Geisler (genkigenki/makkuro) */
 /* fm1-base's platform interface (from X0X's, by way of FoMni-1): everything the app needs from the hardware.
  *
  * The device implementation (plat_fm1.c) wraps Felucca's HAL and panel map; the
@@ -139,6 +140,11 @@ void plat_log(const char *line);
  * from 0xF02), so in these two an app keeps bytes 0xF00..0xF07 of every sector erased (0xFF), or else makes sure
  * those bytes never read as a record: never "AT" at 0xF06 (LOOM-8's sample bank moves its data so, and refuses a
  * bank that has it) */
+#if defined(BOARD_SMK37) && BOARD_SMK37
+#define PLAT_DATA_LO 0xC2000u
+#define PLAT_DATA_HI 0xEA000u
+#define PLAT_DATA_OK(off, n) plat_in((off), (n), PLAT_DATA_LO, PLAT_DATA_HI)
+#else
 #define PLAT_DATA_LO 0x97000u
 #define PLAT_DATA_HI 0xE0000u
 #define PLAT_XDATA0_LO 0x93000u
@@ -148,6 +154,7 @@ void plat_log(const char *line);
 #define PLAT_DATA_OK(off, n) (plat_in((off), (n), PLAT_DATA_LO, PLAT_DATA_HI) || \
                               plat_in((off), (n), PLAT_XDATA0_LO, PLAT_XDATA0_HI) || \
                               plat_in((off), (n), PLAT_XDATA1_LO, PLAT_XDATA1_HI))
+#endif
 static inline int plat_in(uint32_t off, uint32_t n, uint32_t lo, uint32_t hi)   /* [off, off + n) in [lo, hi) */
 {
     return off >= lo && off <= hi && n <= hi - off;
@@ -173,6 +180,28 @@ void plat_usb_audio_full(int on);
  * hands each reading to the app (app_key_sample, app_key_probe); off by default */
 void plat_sense(int on);
 uint32_t plat_analog_mask(void);       /* bit k: key k is on an analog row (PA7 / PA8; the top row is probed) */
+
+#if defined(BOARD_SMK37) && BOARD_SMK37
+/* The M-Vave SMK-37's controls beyond the FM-1's. plat_buttons/plat_enc are the FM-1's by name; plat_keys is the
+ * keybed's F3..G5 and (unless SMK_PADS_OWN) the 16 pads as white keys. Pads: 0..7 top row, 8..15 bottom row. */
+#define SMK_NKEYBED 37                 /* C3 .. C6 */
+#define SMK_NPADS 16
+enum { SB_KNOB_BANK, SB_FADER_BANK, SB_LEFT, SB_RIGHT, NSB };
+enum { SMK_PADS_PIANO, SMK_PADS_GRID, SMK_PADS_OWN };
+void plat_smk_pads(int layout);        /* a pad held keeps the key it pressed until it is let go */
+uint32_t plat_smk_buttons(void);       /* held: bit SB_* */
+void plat_smk_leds(uint32_t lit);      /* their LEDs, bit SB_* (before plat_lights / plat_leds) */
+uint64_t plat_keybed(void);            /* keybed keys held: bit k = key k (0 = C3) */
+uint64_t plat_keybed_hits(void);       /* keybed presses since the last call */
+int plat_keybed_vel(int k);            /* key k's last press: velocity 1..127; 0 = none yet */
+int plat_pedal_raw(void);              /* PEDAL jack: raw 0..1023, -1 none */
+uint32_t plat_pad_hits(void);          /* SMK_PADS_OWN: pad presses, bit p = pad p */
+uint32_t plat_pads_held(void);         /* pads held, bit p = pad p (any layout) */
+int plat_fader(int i);                 /* fader 0..3: 0..127, -1 while the readings settle */
+int plat_wheels(int32_t *pitch, int32_t *modw);   /* 1 = new: pitch -127..127, mod 0..127 */
+void plat_pad_rgb(int pad, uint8_t r, uint8_t g, uint8_t b);
+void plat_pad_lights(int app);         /* 1: the app colours the pads; 0: plat_lights shows keys */
+#endif
 
 /* persistent storage (Felucca storage.c objects: A/B sectors, CRC, torn-write safe) */
 int plat_store_load(uint32_t obj, void *dst, uint32_t max);   /* bytes loaded, < 0 = none / bad (an empty object is

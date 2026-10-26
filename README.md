@@ -114,6 +114,23 @@ The FM-1 has a 581 KB app slot in the flash, 96 KB of RAM for `.data` and `.bss`
   calibration, the splash): `#define APP_SYS_TEXT` in app.h and its `app_sys_h`, `app_sys_w`, `app_sys_text`
   (`device/sys_text.c`); fm1-base's faces are then left out (LOOM-8: 18 KB).
 
+## M-VAVE SMK-37 Pro
+
+This branch also builds fm1-base apps for the M-VAVE SMK-37 Pro:
+
+```sh
+BOARD=smk37 tools/build.py APP_DIR --model pro
+# APP_DIR/build/smk37/NAME-smk37.fwsc
+```
+
+`BOARD_SMK37` selects felucca-bsp's `boards/smk37`, the SMK flash map and package
+layout; it defaults to 0, so the FM-1 build is unchanged. The platform exposes
+the 37-key keybed, pads, faders and wheels through `plat_keybed`, `plat_pad_*`,
+`plat_fader` and `plat_wheels`; `plat_smk_*` carries the extra buttons and pad
+layout. The host simulator understands `keybed`, `pad`, `fader` and `wheel`.
+Store objects move to the SMK VM window; the factory calibration at `0xC1000`
+is read only. See the app's `SMK37.md` and the `fm1-to-smk37` hardware notes.
+
 ## Development over USB
 
 `tools/fm1_remote.py` drives an FM-1 running any fm1-base firmware as a player would: buttons, keys, encoders,

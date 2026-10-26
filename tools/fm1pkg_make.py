@@ -2,6 +2,7 @@
 # SPDX-License-Identifier: MPL-2.0
 # Copyright (C) 2026 Charles Vestal
 # Copyright (C) 2026 Leo Kuroshita (@kurogedelic), Hügelton Instruments
+# The M-Vave SMK-37 parts: Copyright (C) 2026 M. Geisler (genkigenki/makkuro)
 """Build an FM-1 update package (.fwsc) from the Felucca app and update loader.
 
   flash.bin  head [0, 0x4000): flash header (JieLi SDK default values), JLFS
@@ -24,6 +25,34 @@ from pathlib import Path
 
 APP_SLOT = 0x8DFBC
 FLASH_SIZE = 0x93000
+BOARD = "fm1"
+# The region descriptors after app.bin / cfg_tool.bin: (offset, size, flags, resvd, index, name16 or name). The offsets
+# are absolute flash offsets; the bytes after the names are SDK packer fields (VM size, "CODE", "AUTO").
+REGIONS = {
+    "fm1": [(0x93000, 352256, 0x12, 0x80, 0, bytes.fromhex("564d00ffffffffffffffffff00800000")),     # VM
+            (0, None, 0x92, 0x82, 0, bytes.fromhex("5052435400ffffffffffffff434f4445")),         # PRCT
+            (0xE9000, 0x1000, 0x92, 0x80, 0, bytes.fromhex("4254494600ffffffffffffff4155544f")),  # BTIF
+            (0xEA000, 0x12000, 0x92, 0x81, 1, "USR")],
+    # the M-Vave SMK-37 (stock v016)
+    "smk37": [(0x9D000, 0x23000, 0x12, 0x81, 0, bytes.fromhex("564d00ffffffffffffffffff00800000")),    # VM
+              (0, None, 0x92, 0x82, 0, bytes.fromhex("5052435400ffffffffffffff434f4445")),        # PRCT
+              (0xC0000, 0x1000, 0x92, 0x82, 0, bytes.fromhex("4254494600ffffffffffffff4155544f")), # BTIF
+              (0xC1000, 0x1000, 0x92, 0x81, 0, bytes.fromhex("5553525452494d00ffffffffffffffff")), # USRTRIM
+              (0xC2000, 0x29000, 0x92, 0x81, 0, bytes.fromhex("555352464c41534800ffffffffffffff")), # USRFLASH
+              (0xF4000, 0xA000, 0x92, 0x81, 1, "USR")],
+}
+BOARDS = {"fm1": (0x93000, 0x8DFBC), "smk37": (0x9D000, 0x97400)}
+
+
+def set_board(board):
+    """the flash layout of a board: "fm1" (the default) or "smk37" """
+    global BOARD, FLASH_SIZE, APP_SLOT
+    if board not in BOARDS:
+        raise SystemExit(f"fm1pkg_make: unknown board {board!r} (fm1, smk37)")
+    BOARD = board
+    FLASH_SIZE, APP_SLOT = BOARDS[board]
+
+
 KEY = 0x980F
 # flash header: JieLi SDK defaults (burner_size 544, VID "0.01", flash_size 0xFF000,
 # fs_ver 0x10, PID "AC791N_STORY"), plain, without its CRC
@@ -130,11 +159,8 @@ def flash_image(app, key):
     area[0x120 + APP_SLOT:blk] = cfg_tool
     ents = [entry(crc16(app), 0x120, APP_SLOT, 0x82, 0xFF, 0, "app.bin"),
             entry(crc16(cfg_tool), 0x120 + APP_SLOT, len(cfg_tool), 0x82, 0xFF, 0, "cfg_tool.bin"),
-            # region descriptors; the bytes after the names are SDK packer fields (VM size, "CODE", "AUTO")
-            entry(0xFFFF, 0x93000, 352256, 0x12, 0x80, 0, bytes.fromhex("564d00ffffffffffffffffff00800000")),
-            entry(0xFFFF, 0, FLASH_SIZE, 0x92, 0x82, 0, bytes.fromhex("5052435400ffffffffffffff434f4445")),
-            entry(0xFFFF, 0xE9000, 0x1000, 0x92, 0x80, 0, bytes.fromhex("4254494600ffffffffffffff4155544f")),
-            entry(0xFFFF, 0xEA000, 0x12000, 0x92, 0x81, 1, "USR")]
+            *[entry(0xFFFF, off, FLASH_SIZE if size is None else size, flags, resvd, index, name)
+              for off, size, flags, resvd, index, name in REGIONS[BOARD]]]
     area[32:32 + len(b"".join(ents))] = b"".join(ents)
     area[0:32] = entry(crc16(area[32:blk]), 0x02000120, blk, 0x83, 0xFF, 0, "app_area_head")
     # nested cfg directory right after the block: SDK default EQ table
@@ -143,6 +169,8 @@ def flash_image(app, key):
     cfg = entry(crc16(cfg_body), 0x20, 0x20 + len(cfg_body), 0x83, 0xFF, 1, "cfg") + cfg_body
     region = bytearray(area + cfg)
     sfc(region, 0, len(region), 0, key)
+    if 0x4000 + len(region) > FLASH_SIZE:
+        raise SystemExit(f"app area too large: ends at 0x{0x4000 + len(region):x}, past 0x{FLASH_SIZE:x}")
     f[0x4000:0x4000 + len(region)] = region
     return bytes(f)
 
@@ -192,12 +220,15 @@ def main():
     ap.add_argument("app", type=Path)
     ap.add_argument("ota", type=Path)
     ap.add_argument("out", type=Path)
-    ap.add_argument("--product", default="FM-1_900")
+    ap.add_argument("--board", choices=sorted(BOARDS), default="fm1")
+    ap.add_argument("--product", help="package identity (default: FM-1_900; smk37: SMK-37 Pro_900)")
     ap.add_argument("--key", type=lambda s: int(s, 0), default=KEY)
     ap.add_argument("--sdk", type=Path, help="JieLi AC79 SDK checkout (default: $AC79_SDK)")
     a = ap.parse_args()
     global SDK
     SDK = a.sdk
+    set_board(a.board)
+    a.product = a.product or ("FM-1_900" if a.board == "fm1" else "SMK-37 Pro_900")
     pkg = ufw(flash_image(a.app.read_bytes(), a.key), a.ota.read_bytes(), a.product)
     a.out.write_bytes(pkg)
     print(f"package {a.out}: {len(pkg)} B, identity {a.product}, chip key {a.key:#06x}")

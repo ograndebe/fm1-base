@@ -1,7 +1,8 @@
 /* SPDX-License-Identifier: MPL-2.0
  * Copyright (C) 2026 Charles Vestal
  * Copyright (C) 2026 Leo Kuroshita (@kurogedelic), Hügelton Instruments
- * Changed for X0X and fm1-base: the object map is the app's (see below). */
+ * Changed for X0X and fm1-base: the object map is the app's (see below).
+ * The M-Vave SMK-37 parts: Copyright (C) 2026 M. Geisler (genkigenki/makkuro) */
 /* Persistent storage on the SPI NOR.
  *
  * Every object has an A/B sector pair. A save goes to the copy that is not
@@ -46,11 +47,96 @@ static uint32_t st_crc32(const void *p, uint32_t n)   /* zlib CRC-32, 4 bits per
     return ~c;
 }
 
+#if BOARD_SMK37
+/* The M-Vave SMK-37: objects in the stock VM, 0x9D000..0xAEFFF, by number; APP_STORE_MAP's FM-1 addresses mean
+ * nothing here. Never near BTIF/USRTRIM, USR or key_mac. */
+_Static_assert(FL_DATA_LO + 2u * OBJ_NOBJ * ST_SECTOR <= FL_OBJ_HI,
+               "SMK-37 store: more objects than 0x9D000..0xAEFFF holds");
+static uint32_t st_sector(uint32_t obj, uint32_t copy)
+{
+    return FL_DATA_LO + ((obj % OBJ_NOBJ) * 2u + (copy & 1u)) * ST_SECTOR;
+}
+
+/* The sector after the objects (0xAF000) holds this firmware's owner tag. Data from the stock firmware or another
+ * app is cleared before it can be read as ours; calibration, BT pairing and key_mac are outside and never touched. */
+#ifndef FM1B_DATA_FAMILY
+#define FM1B_DATA_FAMILY APP_NAME
+#endif
+#ifndef ST_IDLE
+#define ST_IDLE() ((void)0)
+#endif
+#define ST_OWNER_OFF FL_OBJ_HI
+_Static_assert(sizeof FM1B_DATA_FAMILY >= 2u && sizeof FM1B_DATA_FAMILY <= 32u - 14u,
+               "FM1B_DATA_FAMILY: 1..17 characters");
+#define ST_STOCKTAG_OFF 0xEAFF8u
+_Static_assert(ST_STOCKTAG_OFF + 8u == FL_STOCKTAG_HI, "SMK-37: the stock marker's place");
+static int st_stock_tagged(void)
+{
+    static const uint8_t TAG[8] = {'u', 's', 'r', 'd', 'a', 't', 'a', 0};
+    uint8_t t[8];
+    uint32_t i;
+    if (st_read(ST_STOCKTAG_OFF, t, 8))
+        return 0;
+    for (i = 0; i < 8u; i++)
+        if (t[i] != TAG[i])
+            return 0;
+    return 1;
+}
+static int st_stock_intact(void)
+{
+    uint8_t b[8];
+    uint32_t n, k, i, ff;
+    if (!st_stock_tagged() || st_read(FL_BIG_LO, b, 2) || b[0] != 0xA3u || b[1] != 0x3Au)
+        return 0;
+    for (n = 0; n < 8u; n++)
+        for (k = 0; k < 3u; k++) {
+            if (st_read(FL_BIG_LO + 0x1000u + n * 0x5000u + (k ? 0x2000u + k * 0x1000u : 0u), b, 8))
+                return 0;
+            for (ff = 1, i = 0; i < 8u; i++)
+                ff &= b[i] == 0xFFu;
+            if (ff != (k != 0u))
+                return 0;
+        }
+    return 1;
+}
+static int st_erase_stocktag(void);
+static void st_stock_release(void)
+{
+    if (st_stock_tagged())
+        st_erase_stocktag();
+}
+static uint8_t st_owner_cleared;
+static void st_owner_check(void)
+{
+    static const char FAM[] = FM1B_DATA_FAMILY;
+    uint8_t tag[32], want[32];
+    uint32_t i, ours = 1, s;
+    for (i = 0; i < 32u; i++)
+        want[i] = i < 14u ? (uint8_t)"SMK37DATAFM1B:"[i] : i - 14u < sizeof FAM - 1u ? (uint8_t)FAM[i - 14u] : 0u;
+    if (!st_stock_intact())
+        st_stock_release();
+    if (st_read(ST_OWNER_OFF, tag, 32))
+        return;
+    for (i = 0; i < 32u; i++)
+        ours &= tag[i] == want[i];
+    if (ours)
+        return;
+    for (s = FL_DATA_LO; s < FL_OBJ_HI; s += ST_SECTOR) {
+        ST_IDLE();
+        st_erase(s);
+    }
+    st_owner_cleared = 1;
+    ST_IDLE();
+    st_erase(ST_OWNER_OFF);
+    st_prog(ST_OWNER_OFF, want, 32);
+}
+#else
 static uint32_t st_sector(uint32_t obj, uint32_t copy)  /* flash offset of copy A (0) / B (1) */
 {
     static const uint32_t map[OBJ_NOBJ] = APP_STORE_MAP;
     return map[obj] + copy * ST_SECTOR;
 }
+#endif
 
 static uint8_t st_buf[ST_PAYLOAD_MAX] __attribute__((aligned(4)));
 
