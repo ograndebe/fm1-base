@@ -716,7 +716,10 @@ static void fm1_main(void)
 #if BOARD_SMK37
         flash_ok = FL_JEDEC_OK(FL_FAR(fl_jedec_ram)());   /* the SMK-37's 1 MiB part (or the FM-1's), else RAM only */
 #else
-        flash_ok = FL_FAR(fl_jedec_ram)() == 0x856014u;   /* the expected 1 MiB part, else RAM only */
+        {
+            uint32_t fid = FL_FAR(fl_jedec_ram)();        /* Puya P25Q80 in the first units, UC25HQ80 in newer ones */
+            flash_ok = fid == 0x856014u || fid == 0xB36014u;
+        }
 #endif
         irq_restore(f);
         if (flash_ok) {
