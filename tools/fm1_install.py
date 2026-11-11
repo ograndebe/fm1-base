@@ -25,6 +25,7 @@ import argparse
 import hashlib
 import queue
 import re
+import struct
 import sys
 import time
 
@@ -33,6 +34,7 @@ UPGRADE = bytes([0xF0, 0x22, 0x24, 0x35, 0x7F, 0xF7])
 FINISH_CHECK, FINISH_WRITE = 0xE0000000, 0xF0000000
 MAXDATA = 512
 BLOCKS, BLK, KEEP = 20, 0x30, 0x2F
+BLOCK_COUNTS = (20, 36)                 # FM-1/custom SMK packages, and the SMK stock v016 36-block container
 LOADER_MARK = b"FELUCCA-LOADER-1"
 PORT_RE = re.compile(r"fm-?1|smk|elite|mke-p37|starry|felucca|ota|composite|sinco|usb-midi", re.I)   # never probe other gear
 
@@ -145,12 +147,67 @@ def product_of(raw):
     return "".join(chr((m - i - 1) & 0xFF) for i in range(BLOCKS) if (m := raw[i * BLK + KEEP]) != 0x7D)
 
 
-def logical_image(raw):
-    """the image the device reads during an update: the package without the 20 marker bytes"""
+def crc16(data, crc=0):
+    for b in data:
+        crc ^= b << 8
+        for _ in range(8):
+            crc = ((crc << 1) ^ 0x1021) & 0xFFFF if crc & 0x8000 else (crc << 1) & 0xFFFF
+    return crc
+
+
+def _unenc(buf):
+    """JieLi's CrcDecode stream (key 0xFFFF), in place: the UFW header and directory entries are encoded."""
+    key = 0xFFFF
+    for i in range(len(buf)):
+        buf[i] ^= key & 0xFF
+        key = ((key << 1) ^ (0x1021 if key & 0x8000 else 0)) & 0xFFFF
+
+
+def _ufw_files_ok(image):
+    """the UFW's flash.bin and ota.bin CRCs: the reliable block-count test (the stock package's smaller
+    resource CRCs do not match by design)."""
+    if len(image) < 0x40 + 0x50:
+        return False
+    hdr = bytearray(image[:0x40])
+    _unenc(hdr)
+    n = struct.unpack_from("<H", hdr, 8)[0]
+    if not 1 <= n <= 32:
+        return False
+    lst = image[0x40:0x40 + n * 0x50]
+    if len(lst) != n * 0x50:
+        return False
+    seen = set()
+    for i in range(n):
+        e = bytearray(lst[i * 0x50:(i + 1) * 0x50])
+        _unenc(e)
+        typ = struct.unpack_from("<H", e, 0)[0]
+        crc = struct.unpack_from("<H", e, 4)[0]
+        off = struct.unpack_from("<I", e, 8)[0]
+        ln = struct.unpack_from("<I", e, 12)[0]
+        if typ in (0, 100):
+            if off + ln > len(image) or crc16(image[off:off + ln]) != crc:
+                return False
+            seen.add(typ)
+    return seen == {0, 100}
+
+
+def _logical(raw, blocks):
     out = bytearray()
-    for i in range(BLOCKS):
+    for i in range(blocks):
         out += raw[i * BLK:i * BLK + KEEP]
-    return bytes(out + raw[BLOCKS * BLK:])
+    return bytes(out + raw[blocks * BLK:])
+
+
+def logical_image(raw):
+    """the image the device reads during an update: the package without its marker bytes. The SMK-37
+    stock v016 package uses 36 blocks; FM-1 and custom SMK packages use 20. Pick the one whose UFW
+    flash.bin/ota.bin CRCs hold, so a v016 package is not read 16 bytes out of place."""
+    for blocks in BLOCK_COUNTS:
+        if len(raw) >= blocks * BLK:
+            image = _logical(raw, blocks)
+            if _ufw_files_ok(image):
+                return image
+    return _logical(raw, BLOCKS)
 
 
 def model_of(text):
@@ -385,7 +442,7 @@ class Updater:
     def verify(self, product, step):
         step("reboot")
         time.sleep(DELAY["reboot"])
-        back = self.wait_for(lambda i: not i.loader, DELAY["wait_reboot"])
+        back = self.wait_for(lambda i: i.text == product, DELAY["wait_reboot"])
         if not back:
             raise InstallError("noreturn", "the FM-1 did not come back: power-cycle it")
         back.link.close()
